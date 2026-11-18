@@ -1,17 +1,19 @@
 import type { Context } from 'hono'
 
-import type { Env } from '../env'
+import type { AppEnv } from '../env'
 import { PublishError, publishRelease, type PublishPayload } from '../lib/releases'
 import { receiver } from '../lib/qstash'
+import { isAcceptableVersion } from '../lib/versions'
 import { productFor } from '../products'
 import { isArtifactKind, isChannel, isPlatform, type ProductDefinition } from '../products/types'
 
 const MAX_NOTES_LENGTH = 4096
 const MAX_METADATA_BYTES = 8192
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024 * 1024
+const MAX_BODY_BYTES = 1024 * 1024
 const MESSAGE_ID_PATTERN = /^msg_[A-Za-z0-9_-]{8,200}$/
 
-type PublishContext = Context<{ Bindings: Env }>
+type PublishContext = Context<AppEnv>
 
 /**
  * `POST /:product/:apiVersion/publish` - the endpoint QStash delivers to.
@@ -19,6 +21,11 @@ type PublishContext = Context<{ Bindings: Env }>
  * The bucket and object key are never taken from the message as free
  * pointers: the product config derives the key, and the object must already
  * exist at the declared size before the channel head moves.
+ *
+ * QStash retries every non-2XX response, so permanent rejections are answered
+ * with 489 + `Upstash-NonRetryable-Error: true`, which sends the message to
+ * the dead-letter queue immediately. Only 5xx responses (storage or database
+ * trouble) are retriable.
  */
 export async function handlePublish(c: PublishContext): Promise<Response> {
   const product = productFor(c.req.param('product') ?? '')
@@ -26,13 +33,23 @@ export async function handlePublish(c: PublishContext): Promise<Response> {
 
   const apiVersion = c.req.param('apiVersion') ?? ''
   if (!product.apiVersions.includes(apiVersion)) {
-    return c.json(
-      { error: `unsupported api version: ${apiVersion}`, supported: product.apiVersions },
-      404,
+    return nonRetryable(
+      c,
+      `unsupported api version: ${apiVersion}`,
+      { supported: product.apiVersions },
     )
   }
 
+  const declaredLength = Number(c.req.header('content-length') ?? '0')
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return nonRetryable(c, 'body is too large')
+  }
+
   const raw = await c.req.text()
+  if (raw.length > MAX_BODY_BYTES) {
+    return nonRetryable(c, 'body is too large')
+  }
+
   const signature = c.req.header('upstash-signature')
   if (!signature) {
     return c.json({ error: 'missing upstash-signature header' }, 401)
@@ -47,16 +64,16 @@ export async function handlePublish(c: PublishContext): Promise<Response> {
   try {
     body = JSON.parse(raw)
   } catch {
-    return c.json({ error: 'body is not valid JSON' }, 400)
+    return nonRetryable(c, 'body is not valid JSON')
   }
 
   const messageId = c.req.header('upstash-message-id')
   if (!messageId || !MESSAGE_ID_PATTERN.test(messageId)) {
-    return c.json({ error: 'invalid upstash-message-id header' }, 400)
+    return nonRetryable(c, 'invalid upstash-message-id header')
   }
 
   const parsed = parsePayload(body, product)
-  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  if (!parsed.ok) return nonRetryable(c, parsed.error)
 
   try {
     const result = await publishRelease(c.env, product, { ...parsed.value, messageId })
@@ -78,11 +95,30 @@ export async function handlePublish(c: PublishContext): Promise<Response> {
     })
   } catch (error) {
     if (error instanceof PublishError) {
-      return c.json({ error: error.message }, error.status)
+      if (error.status === 503) {
+        return c.json({ error: error.message }, 503)
+      }
+      return nonRetryable(c, error.message)
     }
     console.error('publish failed', error instanceof Error ? error.message : 'error')
     return c.json({ error: 'failed to publish release' }, 500)
   }
+}
+
+/** 489 + the non-retryable header: QStash moves the message straight to the DLQ. */
+function nonRetryable(
+  c: PublishContext,
+  error: string,
+  extra: Record<string, unknown> = {},
+): Response {
+  return new Response(JSON.stringify({ error, ...extra }), {
+    status: 489,
+    headers: {
+      'Content-Type': 'application/json',
+      'Upstash-NonRetryable-Error': 'true',
+      'Cache-Control': 'no-store',
+    },
+  })
 }
 
 type ParseResult = { ok: true; value: Omit<PublishPayload, 'messageId'> } | { ok: false; error: string }
@@ -99,7 +135,7 @@ function parsePayload(body: unknown, product: ProductDefinition): ParseResult {
   }
 
   const version = record.version
-  if (typeof version !== 'string' || !product.isValidVersion(version)) {
+  if (typeof version !== 'string' || !isAcceptableVersion(product, version)) {
     return { ok: false, error: 'version must be valid for this product' }
   }
 

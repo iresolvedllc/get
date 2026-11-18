@@ -8,8 +8,21 @@ import type { ProductDefinition } from '../products/types'
  */
 export const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 
+/** Upper bound on any caller-supplied version or target string. */
+export const MAX_VERSION_LENGTH = 64
+
 export function isSemverVersion(value: string): boolean {
   return SEMVER_PATTERN.test(value)
+}
+
+/**
+ * Whether a caller-supplied version is acceptable for a product.
+ *
+ * The length cap bounds the regex work: the grammar itself has no length
+ * limit, so an unbounded `?version=` could otherwise be megabytes long.
+ */
+export function isAcceptableVersion(product: ProductDefinition, value: string): boolean {
+  return value.length <= MAX_VERSION_LENGTH && product.isValidVersion(value)
 }
 
 /**

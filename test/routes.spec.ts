@@ -131,4 +131,39 @@ describe('publish route validation', () => {
     })
     expect(response.status).toBe(401)
   })
+
+  it('answers a wrong method with 405 and Allow', async () => {
+    const post = await SELF.fetch(`${ORIGIN}/build/v1/update`, { method: 'POST' })
+    expect(post.status).toBe(405)
+    expect(post.headers.get('allow')).toBe('GET')
+
+    const get = await SELF.fetch(`${ORIGIN}/build/v1/publish`)
+    expect(get.status).toBe(405)
+    expect(get.headers.get('allow')).toBe('POST')
+  })
+})
+
+describe('response pipeline', () => {
+  it('sets security headers on every response', async () => {
+    const response = await SELF.fetch(`${ORIGIN}/`)
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(response.headers.get('x-frame-options')).toBe('SAMEORIGIN')
+  })
+
+  it('rejects an oversized publish body before reading it', async () => {
+    const response = await SELF.fetch(`${ORIGIN}/build/v1/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': String(2 * 1024 * 1024) },
+      body: 'x',
+    })
+    expect(response.status).toBe(489)
+    expect(response.headers.get('upstash-nonretryable-error')).toBe('true')
+  })
+
+  it('answers version params over the length cap with 400', async () => {
+    const long = '1.0.0-' + 'a'.repeat(64)
+    const response = await SELF.fetch(`${ORIGIN}/build/v1/update?version=${long}`)
+    expect(response.status).toBe(400)
+  })
 })

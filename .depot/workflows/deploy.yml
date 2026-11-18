@@ -35,6 +35,8 @@ jobs:
       GET_AWS_REGION: ${{ secrets.GET_AWS_REGION }}
       GET_AWS_ENDPOINT_URL_S3: ${{ secrets.GET_AWS_ENDPOINT_URL_S3 }}
       GET_S3_BUCKET: ${{ secrets.GET_S3_BUCKET }}
+      GET_UPSTASH_REDIS_REST_URL: ${{ secrets.GET_UPSTASH_REDIS_REST_URL }}
+      GET_UPSTASH_REDIS_REST_TOKEN: ${{ secrets.GET_UPSTASH_REDIS_REST_TOKEN }}
       QSTASH_CURRENT_SIGNING_KEY: ${{ secrets.QSTASH_CURRENT_SIGNING_KEY }}
       QSTASH_NEXT_SIGNING_KEY: ${{ secrets.QSTASH_NEXT_SIGNING_KEY }}
     steps:
@@ -53,6 +55,7 @@ jobs:
             GET_DATABASE_URL \
             GET_AWS_ACCESS_KEY_ID GET_AWS_SECRET_ACCESS_KEY GET_AWS_REGION \
             GET_AWS_ENDPOINT_URL_S3 GET_S3_BUCKET \
+            GET_UPSTASH_REDIS_REST_URL GET_UPSTASH_REDIS_REST_TOKEN \
             QSTASH_CURRENT_SIGNING_KEY QSTASH_NEXT_SIGNING_KEY; do
             if [ -z "${!name:-}" ]; then
               missing+=("$name")
@@ -67,6 +70,12 @@ jobs:
 
       - name: Install dependencies
         run: bun install --cwd "$GITHUB_WORKSPACE" --frozen-lockfile
+
+      - name: Typecheck
+        run: bun --cwd "$GITHUB_WORKSPACE" run typecheck
+
+      - name: Test
+        run: bun --cwd "$GITHUB_WORKSPACE" run test
 
       - name: Apply database migrations
         run: bun run scripts/migrate.ts
@@ -89,6 +98,8 @@ jobs:
               ["AWS_REGION", process.env.GET_AWS_REGION],
               ["AWS_ENDPOINT_URL_S3", process.env.GET_AWS_ENDPOINT_URL_S3],
               ["S3_BUCKET", process.env.GET_S3_BUCKET],
+              ["UPSTASH_REDIS_REST_URL", process.env.GET_UPSTASH_REDIS_REST_URL],
+              ["UPSTASH_REDIS_REST_TOKEN", process.env.GET_UPSTASH_REDIS_REST_TOKEN],
               ["QSTASH_CURRENT_SIGNING_KEY", process.env.QSTASH_CURRENT_SIGNING_KEY],
               ["QSTASH_NEXT_SIGNING_KEY", process.env.QSTASH_NEXT_SIGNING_KEY],
             ]

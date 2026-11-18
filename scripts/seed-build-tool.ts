@@ -16,9 +16,8 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
-
 import type { Env } from '../src/env'
+import { putObject } from '../src/lib/s3'
 import { publishRelease } from '../src/lib/releases'
 import { buildToolProduct } from '../src/products/build-tool'
 const __ORIGINAL_URL = new URL(import.meta.url);
@@ -58,35 +57,23 @@ const binaryKey = buildToolProduct.artifactKey({ channel, version, platform, kin
 const checksumKey = buildToolProduct.artifactKey({ channel, version, platform, kind: 'checksums' })
 const checksumBody = `${sha256}  ${buildToolProduct.filenameFor({ version, platform, kind: 'binary' })}\n`
 
-const s3 = new S3Client({
+await putObject(env, {
+  bucket: env.S3_BUCKET,
+  key: binaryKey,
   region: env.AWS_REGION,
-  endpoint: env.AWS_ENDPOINT_URL_S3,
-  forcePathStyle: true,
-  credentials: {
-    accessKeyId: env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-  },
+  body,
+  contentType: 'application/octet-stream',
+  metadata: { sha256, commit, version, binary_version: binaryVersion },
 })
 
-await s3.send(
-  new PutObjectCommand({
-    Bucket: env.S3_BUCKET,
-    Key: binaryKey,
-    Body: body,
-    ContentType: 'application/octet-stream',
-    Metadata: { sha256, commit, version, binary_version: binaryVersion },
-  }),
-)
-
-await s3.send(
-  new PutObjectCommand({
-    Bucket: env.S3_BUCKET,
-    Key: checksumKey,
-    Body: checksumBody,
-    ContentType: 'text/plain; charset=utf-8',
-    Metadata: { sha256: createHash('sha256').update(checksumBody).digest('hex') },
-  }),
-)
+await putObject(env, {
+  bucket: env.S3_BUCKET,
+  key: checksumKey,
+  region: env.AWS_REGION,
+  body: checksumBody,
+  contentType: 'text/plain; charset=utf-8',
+  metadata: { sha256: createHash('sha256').update(checksumBody).digest('hex') },
+})
 
 const result = await publishRelease(env, buildToolProduct, {
   channel,

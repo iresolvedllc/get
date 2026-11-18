@@ -16,7 +16,8 @@ The service is deployed at **https://get.iresolved.link**.
 | Kiln (Windows) | `irm https://get.iresolved.link/kiln/install.ps1 \| iex` | `/kiln/v1/update` |
 
 `GET /` lists the registry, including channels and platforms. `GET /healthz`
-is the liveness check.
+is the liveness check and `GET /healthz/deep` also verifies the database
+(cached in isolate memory for 10s).
 
 ## API
 
@@ -77,6 +78,14 @@ the URL a script trusts.
 QStash delivers to `POST /<product>/v1/publish`. The Worker verifies the
 `upstash-signature` header against the raw body with the current and next
 signing keys, then validates the payload and the objects in the bucket.
+Bodies over 1 MiB are rejected before being read.
+
+QStash retries every non-2XX response, so permanent rejections — malformed
+payloads, unknown channels, refused downgrades — are answered with
+**489 + `Upstash-NonRetryable-Error: true`**, which sends the message straight
+to the dead-letter queue instead of retrying it. Only 5xx responses (storage
+or database trouble) are retried; a rate-limited publish carries `Retry-After`
+so QStash reschedules the delivery rather than burning an attempt.
 
 ```json
 {
@@ -133,25 +142,59 @@ The routes, storage layout, and publish handler do not change.
 
 ## Environment
 
-`.env.get` at the repository root is untracked. Product-owned variables use the
-`GET_` prefix; the shared QStash variables do not.
+`.env` at the repository root is untracked. Product-owned variables use the
+`GET_` prefix; the shared QStash variables do not. `scripts/dev-vars.ts`
+generates `.dev.vars` from it for `wrangler dev`, and CI receives the same
+values as Depot secrets.
 
-| `.env.get` | Worker binding |
+| `.env` | Worker binding |
 | --- | --- |
-| `GET_DATABASE_URL` | `DATABASE_URL` |
+| `GET_DATABASE_URL` | `DATABASE_URL` (pooled endpoint) |
 | `GET_AWS_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID` |
 | `GET_AWS_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY` |
 | `GET_AWS_REGION` | `AWS_REGION` |
 | `GET_AWS_ENDPOINT_URL_S3` | `AWS_ENDPOINT_URL_S3` |
 | `GET_S3_BUCKET` | `S3_BUCKET` |
+| `GET_UPSTASH_REDIS_REST_URL` | `UPSTASH_REDIS_REST_URL` |
+| `GET_UPSTASH_REDIS_REST_TOKEN` | `UPSTASH_REDIS_REST_TOKEN` |
 | `QSTASH_CURRENT_SIGNING_KEY` | `QSTASH_CURRENT_SIGNING_KEY` |
 | `QSTASH_NEXT_SIGNING_KEY` | `QSTASH_NEXT_SIGNING_KEY` |
 
 `QSTASH_URL` and `QSTASH_TOKEN` are used by CI to publish. The Worker only
-verifies signatures. `GET_NEON_REALTIME_*` is not used in v1.
+verifies signatures. `GET_DATABASE_URL_DIRECT` and `GET_REDIS_URL` are kept for
+manual tooling and are unused by the Worker. `GET_NEON_AI_GATEWAY_*` is
+reserved for upcoming security work (JEV verification and an IP reputation
+database) and is not read by the Worker in v1.
 
 Wrangler vars are in `wrangler.jsonc`: `PRESIGN_TTL_SECONDS` and
-`CANONICAL_ORIGIN`.
+`CANONICAL_ORIGIN`. The `IP_RATE_LIMIT` rate-limit binding and the nightly
+cron are declared there too.
+
+## Rate limiting
+
+Two independent layers, both keyed on `CF-Connecting-IP`:
+
+1. `IP_RATE_LIMIT`, a Cloudflare rate-limit binding — a coarse fixed window of
+   60 requests/minute per IP enforced at the edge. It has no external
+   dependency and keeps protecting the service when Upstash Redis is
+   unreachable.
+2. Sliding windows in Upstash Redis (`src/lib/ratelimit.ts`): update/download
+   30/min, install 20/min, publish 30/min per IP.
+
+Exhausted windows get `429` with `Retry-After` and `X-RateLimit-*` headers
+(plain-text bodies on install routes, JSON elsewhere). When Redis is
+unreachable the sliding windows fail **closed** with `503` — the service
+prefers to appear unavailable rather than run without abuse protection; the
+edge binding keeps its coarse cap either way. Without the Redis bindings
+(`wrangler dev` without `.dev.vars`, tests) the sliding-window layer is
+disabled and only the edge binding applies.
+
+## Caching
+
+`GET /` is cached at the edge for 5 minutes. Update and download responses are
+cached for 60 seconds with `stale-while-revalidate=300` — safe because
+presigned URLs stay valid for `PRESIGN_TTL_SECONDS` (900 by default, clamped
+to 60–3600). Publish, install, and every error response are `no-store`.
 
 ## Local development
 
@@ -161,8 +204,9 @@ $ bun run migrate
 $ bun run dev
 ```
 
-`bun run dev` maps `.env.get` into a gitignored `.dev.vars` and starts
-`wrangler dev` on http://127.0.0.1:8787.
+`bun run dev` maps `.env` into a gitignored `.dev.vars` (via
+`scripts/dev-vars.ts`) and starts `wrangler dev` on http://127.0.0.1:8787.
+Use `bun run dev-vars` to regenerate `.dev.vars` without starting wrangler.
 
 Tests:
 
@@ -171,8 +215,10 @@ $ bun run test
 $ bun run typecheck
 ```
 
-The integration tests use the `.env.get` bindings when they are present. They
-publish to the `beta` channel and restore the previous head afterwards.
+The integration tests use the `.env` bindings (through `.dev.vars`) when they
+are present. They publish to the `beta` channel and restore the previous head
+afterwards. The rate-limit sliding windows are disabled in tests; only the
+edge binding applies.
 
 ## Seeding build-tool
 
@@ -195,7 +241,8 @@ $ just deploy
 ```
 
 The worker's secrets are the values in the table above. `.depot/workflows/deploy.yml`
-applies migrations, deploys the worker, and publishes the secrets.
+runs typecheck and tests, applies migrations, deploys the worker, and publishes
+the secrets (add them with `depot ci secrets add <NAME>` in the org).
 
 The custom domain is declared in `infra/terraform/workers.tf` as
 `cloudflare_workers_domain.get`. The worker script is named `get-unified` so it

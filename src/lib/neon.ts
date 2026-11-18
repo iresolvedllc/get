@@ -6,6 +6,32 @@ export type Sql = ReturnType<typeof neon>
 
 const clients = new Map<string, Sql>()
 
+export class UpstreamTimeoutError extends Error {
+  readonly operation: string
+
+  constructor(operation: string, timeoutMs: number) {
+    super(`${operation} timed out after ${timeoutMs}ms`)
+    this.name = 'UpstreamTimeoutError'
+    this.operation = operation
+  }
+}
+
+const DEFAULT_TIMEOUT_MS = 10_000
+
+/**
+ * Give up on an upstream call instead of pinning the isolate on a hung
+ * socket. The underlying request is abandoned, not cancelled; the caller
+ * turns the rejection into a 503.
+ */
+export function withTimeout<T>(operation: string, promise: Promise<T>, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new UpstreamTimeoutError(operation, timeoutMs)), timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+
 /**
  * The Neon client.
  *

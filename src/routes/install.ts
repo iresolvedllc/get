@@ -1,11 +1,12 @@
 import type { Context } from 'hono'
 
-import type { Env } from '../env'
+import type { AppEnv } from '../env'
 import { installerOrigin } from '../lib/http'
+import { isAcceptableVersion } from '../lib/versions'
 import { productFor } from '../products'
-import { isChannel, type ProductDefinition } from '../products/types'
+import { isChannel } from '../products/types'
 
-type InstallContext = Context<{ Bindings: Env }>
+type InstallContext = Context<AppEnv>
 
 export function handleShellInstall(c: InstallContext): Response {
   return renderInstall(c, false)
@@ -37,7 +38,7 @@ function renderInstall(c: InstallContext, powerShell: boolean): Response {
   }
 
   const version = params.get('target') ?? params.get('version')
-  if (version !== null && !product.isValidVersion(version)) {
+  if (version !== null && !isAcceptableVersion(product, version)) {
     return c.json({ error: `invalid version: ${version}` }, 400)
   }
 
