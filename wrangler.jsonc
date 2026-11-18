@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "get-unified",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // Overrides the proxied *.iresolved.link wildcard (192.0.2.1). Without this
+  // route, wrangler deploy only publishes the workers.dev trigger.
+  "routes": [
+    {
+      "pattern": "get.iresolved.link",
+      "custom_domain": true
+    }
+  ],
+  // Secrets (set with `wrangler secret bulk`, not stored in this file):
+  //   DATABASE_URL
+  //   AWS_ACCESS_KEY_ID
+  //   AWS_SECRET_ACCESS_KEY
+  //   AWS_REGION
+  //   AWS_ENDPOINT_URL_S3
+  //   S3_BUCKET
+  //   QSTASH_CURRENT_SIGNING_KEY
+  //   QSTASH_NEXT_SIGNING_KEY
+  "vars": {
+    "PRESIGN_TTL_SECONDS": "900",
+    "CANONICAL_ORIGIN": "https://get.iresolved.link"
+  }
+}

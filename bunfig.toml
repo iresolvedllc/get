@@ -1,0 +1,4 @@
+[install]
+# One install at the repo root. Linker stays hoisted. If a workspace member
+# breaks under hoisting, set `linker = "isolated"` and note which package.
+linker = "hoisted"
