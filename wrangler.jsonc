@@ -24,8 +24,24 @@
   //   S3_BUCKET
   //   QSTASH_CURRENT_SIGNING_KEY
   //   QSTASH_NEXT_SIGNING_KEY
+  //   UPSTASH_REDIS_REST_URL
+  //   UPSTASH_REDIS_REST_TOKEN
   "vars": {
     "PRESIGN_TTL_SECONDS": "900",
     "CANONICAL_ORIGIN": "https://get.iresolved.link"
+  },
+  // Coarse per-IP cap enforced by Cloudflare at the edge, independent of the
+  // Upstash Redis limiters: it keeps working when Redis is unreachable.
+  // Fine-grained sliding windows live in src/lib/ratelimit.ts.
+  "ratelimits": [
+    {
+      "name": "IP_RATE_LIMIT",
+      "namespace_id": "1001",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
+  // Nightly pruning of the publish idempotency table (src/index.ts).
+  "triggers": {
+    "crons": ["41 3 * * *"]
   }
 }

@@ -1,11 +1,17 @@
 import type { Context } from 'hono'
 
-import type { Env } from '../env'
+import type { AppEnv } from '../env'
+import { withEdgeCache } from '../lib/http'
 import { presignArtifacts, resolveHead, resolveTarget } from '../lib/releases'
+import { isAcceptableVersion } from '../lib/versions'
 import { productFor } from '../products'
 import { isChannel, isPlatform } from '../products/types'
 
-type DownloadContext = Context<{ Bindings: Env }>
+type DownloadContext = Context<AppEnv>
+
+/** The redirect target is presigned; keep the edge cache inside its lifetime. */
+const CACHE_SECONDS = 60
+const STALE_SECONDS = 300
 
 /**
  * `GET /:product/:apiVersion/download` - redirect to the primary artifact.
@@ -44,25 +50,33 @@ export async function handleDownload(c: DownloadContext): Promise<Response> {
   }
 
   const target = params.get('target') ?? params.get('version')
-  if (target !== null && !product.isValidVersion(target)) {
+  if (target !== null && !isAcceptableVersion(product, target)) {
     return c.json({ error: `invalid version: ${target}` }, 400)
   }
 
-  const release = target
-    ? await resolveTarget(c.env, product, channel, target, platform)
-    : await resolveHead(c.env, product, channel, platform)
-  if (!release) {
-    return c.json({ error: `no release available for channel: ${channel}` }, 404, {
-      'Cache-Control': 'no-store',
-    })
-  }
+  return withEdgeCache(
+    c,
+    CACHE_SECONDS,
+    STALE_SECONDS,
+    async () => {
+      const release = target
+        ? await resolveTarget(c.env, product, channel, target, platform)
+        : await resolveHead(c.env, product, channel, platform)
+      if (!release) {
+        return c.json({ error: `no release available for channel: ${channel}` }, 404, {
+          'Cache-Control': 'no-store',
+        })
+      }
 
-  const artifacts = await presignArtifacts(c.env, release, false)
-  const primary =
-    artifacts.find((artifact) => artifact.kind === product.primaryKind) ?? artifacts[0]
-  if (!primary) {
-    return c.json({ error: 'release has no downloadable artifacts' }, 404)
-  }
+      const artifacts = await presignArtifacts(c.env, release, false)
+      const primary =
+        artifacts.find((artifact) => artifact.kind === product.primaryKind) ?? artifacts[0]
+      if (!primary) {
+        return c.json({ error: 'release has no downloadable artifacts' }, 404)
+      }
 
-  return c.redirect(primary.url, 302)
+      return c.redirect(primary.url, 302)
+    },
+    [200, 302],
+  )
 }

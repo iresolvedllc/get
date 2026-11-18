@@ -13,9 +13,8 @@ import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
-
 import type { Env } from '../src/env'
+import { putObject } from '../src/lib/s3'
 import { publishRelease, type PublishArtifact } from '../src/lib/releases'
 import { productFor } from '../src/products'
 import { isChannel, isPlatform } from '../src/products/types'
@@ -50,16 +49,6 @@ const env: Env = {
   QSTASH_CURRENT_SIGNING_KEY: process.env.QSTASH_CURRENT_SIGNING_KEY ?? '',
   QSTASH_NEXT_SIGNING_KEY: process.env.QSTASH_NEXT_SIGNING_KEY ?? '',
 }
-
-const s3 = new S3Client({
-  region: env.AWS_REGION,
-  endpoint: env.AWS_ENDPOINT_URL_S3,
-  forcePathStyle: true,
-  credentials: {
-    accessKeyId: env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
-  },
-})
 
 const platformNames = platform.split(',').map((value: string) => value.trim()).filter(Boolean)
 if (platformNames.length === 0) fail('error: at least one platform is required')
@@ -121,18 +110,17 @@ async function uploadArtifact(
   const sha256 = createHash('sha256').update(body).digest('hex')
   const objectKey = product!.artifactKey({ channel, version, platform: platformName, kind })
   const contentType = contentTypeFor(kind)
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: env.S3_BUCKET,
-      Key: objectKey,
-      Body: body,
-      ContentType: contentType,
-      Metadata: {
-        sha256,
-        ...(process.env.GITHUB_SHA ? { commit: process.env.GITHUB_SHA } : {}),
-      },
-    }),
-  )
+  await putObject(env, {
+    bucket: env.S3_BUCKET,
+    key: objectKey,
+    region: env.AWS_REGION,
+    body,
+    contentType,
+    metadata: {
+      sha256,
+      ...(process.env.GITHUB_SHA ? { commit: process.env.GITHUB_SHA } : {}),
+    },
+  })
   console.log(`uploaded s3://${env.S3_BUCKET}/${objectKey}`)
   return {
     platform: platformName,

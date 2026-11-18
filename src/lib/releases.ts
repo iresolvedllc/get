@@ -8,6 +8,7 @@ import {
   parseMetadata,
   sql,
   toNumber,
+  withTimeout,
 } from './neon'
 import { objectInfo, presignGet } from './s3'
 import { isNewer } from './versions'
@@ -71,7 +72,9 @@ export async function resolveHead(
   channel: string,
   platform: string,
 ): Promise<ResolvedRelease | null> {
-  const rows = (await sql(env)`
+  const rows = (await withTimeout(
+    'database resolve head',
+    sql(env)`
     WITH RECURSIVE chain AS (
       SELECT c.name, c.fallback, 0 AS depth
         FROM channels c
@@ -97,7 +100,7 @@ export async function resolveHead(
       JOIN releases r ON r.id = h.release_id
      ORDER BY ch.depth
      LIMIT 1
-  `) as unknown as HeadRow[]
+  `)) as unknown as HeadRow[]
 
   const row = rows[0]
   if (!row) return null
@@ -112,7 +115,9 @@ export async function resolveTarget(
   version: string,
   platform: string,
 ): Promise<ResolvedRelease | null> {
-  const rows = (await sql(env)`
+  const rows = (await withTimeout(
+    'database resolve target',
+    sql(env)`
     SELECT r.id::text AS release_id, r.channel, r.version, r.notes, r.metadata,
            to_char(r.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS published_at,
            (SELECT json_agg(json_build_object(
@@ -127,7 +132,7 @@ export async function resolveTarget(
        AND r.channel = ${channel}
        AND r.version = ${version}
      LIMIT 1
-  `) as unknown as ReleaseRow[]
+  `)) as unknown as ReleaseRow[]
 
   const row = rows[0]
   if (!row) return null
@@ -190,7 +195,9 @@ export async function publishRelease(
   const unordered = ordered ? 'no' : 'yes'
   const rollback = payload.rollback ? 'yes' : 'no'
 
-  const rows = (await sql(env)`
+  const rows = (await withTimeout(
+    'database publish release',
+    sql(env)`
     WITH already AS (
       SELECT message_id FROM publish_messages WHERE message_id = ${payload.messageId}
     ),
@@ -262,7 +269,7 @@ export async function publishRelease(
            (SELECT count(*) FROM inserted) AS inserted_count,
            (SELECT count(*) FROM moved) AS moved_count,
            (SELECT count(*) FROM recorded) AS recorded_count
-  `) as unknown as PublishWriteRow[]
+  `)) as unknown as PublishWriteRow[]
 
   const row = rows[0]
   if (!row) throw new PublishError(503, 'could not record the release')
@@ -287,13 +294,15 @@ interface PublishWriteRow {
 }
 
 async function currentHeadVersion(env: Env, product: string, channel: string): Promise<string | null> {
-  const rows = (await sql(env)`
+  const rows = (await withTimeout(
+    'database current head',
+    sql(env)`
     SELECT r.version
       FROM channel_heads h
       JOIN releases r ON r.id = h.release_id
      WHERE h.product = ${product}
        AND h.channel = ${channel}
-  `) as unknown as { version: string }[]
+  `)) as unknown as { version: string }[]
   return rows[0]?.version ?? null
 }
 

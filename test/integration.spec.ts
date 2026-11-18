@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
 
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { env, SELF } from 'cloudflare:test'
 import { SignJWT } from 'jose'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import type { Env } from '../src/env'
+import { deleteObject, putObject } from '../src/lib/s3'
 import { buildProduct } from '../src/products/build'
 
 const bindings = env as unknown as Env
@@ -35,18 +35,6 @@ function haveBindings(): boolean {
       bindings.AWS_REGION &&
       bindings.S3_BUCKET,
   )
-}
-
-function s3(): S3Client {
-  return new S3Client({
-    region: bindings.AWS_REGION,
-    endpoint: bindings.AWS_ENDPOINT_URL_S3,
-    forcePathStyle: true,
-    credentials: {
-      accessKeyId: bindings.AWS_ACCESS_KEY_ID,
-      secretAccessKey: bindings.AWS_SECRET_ACCESS_KEY,
-    },
-  })
 }
 
 async function signMessage(body: string, destination: string): Promise<string> {
@@ -111,15 +99,14 @@ describe('publish and update round trip', () => {
     `) as unknown as { release_id: string }[]
     previousHead = rows[0]?.release_id ?? null
 
-    await s3().send(
-      new PutObjectCommand({
-        Bucket: bindings.S3_BUCKET,
-        Key: OBJECT_KEY,
-        Body: BODY,
-        ContentType: 'application/octet-stream',
-        Metadata: { sha256: SHA256 },
-      }),
-    )
+    await putObject(bindings, {
+      bucket: bindings.S3_BUCKET,
+      key: OBJECT_KEY,
+      region: bindings.AWS_REGION,
+      body: BODY,
+      contentType: 'application/octet-stream',
+      metadata: { sha256: SHA256 },
+    })
 
     const response = await publish()
     if (response.status !== 200) {
@@ -140,7 +127,11 @@ describe('publish and update round trip', () => {
       await sql`DELETE FROM channel_heads WHERE product = 'build' AND channel = ${CHANNEL}`
     }
     await sql`DELETE FROM publish_messages WHERE message_id = ${MESSAGE_ID}`
-    await s3().send(new DeleteObjectCommand({ Bucket: bindings.S3_BUCKET, Key: OBJECT_KEY }))
+    await deleteObject(bindings, {
+      bucket: bindings.S3_BUCKET,
+      key: OBJECT_KEY,
+      region: bindings.AWS_REGION,
+    })
   })
 
   it('reports the published release', async () => {
@@ -166,6 +157,9 @@ describe('publish and update round trip', () => {
     const response = await SELF.fetch(
       `${ORIGIN}/build/v1/update?channel=${CHANNEL}&platform=${PLATFORM}`,
     )
+    if (response.status !== 200) {
+      throw new Error(`update fetch failed: ${response.status} ${await response.text()}`)
+    }
     const payload = (await response.json()) as { url: string }
     const download = await fetch(payload.url)
     expect(download.status).toBe(200)
