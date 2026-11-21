@@ -28,7 +28,7 @@
     "@cloudflare/workers-types": "5.20261023.1",
     "@types/node": "^22.10.2",
     "@types/semver": "^7.7.0",
-    "jose": "6.2.13",
+    "jose": "6.2.18",
     "typescript": "^6.0.2",
     "vitest": "5.0.5",
     "wrangler": "^4.70.0"
