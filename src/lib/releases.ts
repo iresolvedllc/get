@@ -306,6 +306,16 @@ async function currentHeadVersion(env: Env, product: string, channel: string): P
   return rows[0]?.version ?? null
 }
 
+/**
+ * The publisher uploads every artifact immediately before asking QStash to
+ * move the channel head. Neon Object Storage can serve a fresh object from one
+ * client while a different reader still reports it missing, so a single HEAD
+ * is not enough: retry briefly, then answer 503 so QStash redelivers instead
+ * of permanently rejecting a release that is still propagating.
+ */
+const ARTIFACT_VISIBILITY_ATTEMPTS = 5
+const ARTIFACT_VISIBILITY_DELAY_MS = 500
+
 async function assertArtifactsPresent(
   env: Env,
   product: ProductDefinition,
@@ -324,22 +334,32 @@ async function assertArtifactsPresent(
       }
 
       let info
-      try {
-        info = await objectInfo(env, {
-          bucket: env.S3_BUCKET,
-          key: artifact.objectKey,
-          region: env.AWS_REGION,
-        })
-      } catch (error) {
-        console.error('artifact check failed', artifact.kind, error instanceof Error ? error.name : 'error')
-        throw new PublishError(503, `could not verify artifact ${artifact.kind}`)
+      for (let attempt = 1; attempt <= ARTIFACT_VISIBILITY_ATTEMPTS; attempt += 1) {
+        try {
+          info = await objectInfo(env, {
+            bucket: env.S3_BUCKET,
+            key: artifact.objectKey,
+            region: env.AWS_REGION,
+          })
+        } catch (error) {
+          console.error('artifact check failed', artifact.kind, error instanceof Error ? error.name : 'error')
+          throw new PublishError(503, `could not verify artifact ${artifact.kind}`)
+        }
+
+        const settled =
+          info.size === artifact.size &&
+          (!info.sha256 || info.sha256 === artifact.sha256)
+        if (settled) break
+        if (attempt < ARTIFACT_VISIBILITY_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * ARTIFACT_VISIBILITY_DELAY_MS))
+        }
       }
 
-      if (info.size === null) {
-        throw new PublishError(400, `artifact ${artifact.kind} is not in the bucket`)
+      if (info?.size === null || info === undefined) {
+        throw new PublishError(503, `artifact ${artifact.kind} is not visible yet`)
       }
       if (info.size !== artifact.size) {
-        throw new PublishError(400, `artifact ${artifact.kind} size does not match the object`)
+        throw new PublishError(503, `artifact ${artifact.kind} size is not visible yet`)
       }
       if (info.sha256 && info.sha256 !== artifact.sha256) {
         throw new PublishError(400, `artifact ${artifact.kind} sha256 does not match the object metadata`)
