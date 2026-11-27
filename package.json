@@ -15,7 +15,7 @@
     "seed-build-tool": "bun --env-file=.env run scripts/seed-build-tool.ts"
   },
   "dependencies": {
-    "@neondatabase/serverless": "1.2.0",
+    "@neondatabase/serverless": "1.2.2",
     "@upstash/qstash": "^2.12.0",
     "@upstash/ratelimit": "2.2.1",
     "@upstash/redis": "1.41.0",
