@@ -7,7 +7,7 @@
       "dependencies": {
         "@neondatabase/serverless": "1.2.0",
         "@upstash/qstash": "^2.12.0",
-        "@upstash/ratelimit": "2.2.1",
+        "@upstash/ratelimit": "2.2.3",
         "@upstash/redis": "1.41.0",
         "aws4fetch": "1.0.20",
         "hono": "4.13.13",
@@ -230,7 +230,7 @@
 
     "@upstash/qstash": ["@upstash/qstash@2.12.2", "", { "dependencies": { "jose": "^5.2.3", "neverthrow": "^7.0.1", "uncrypto": "^0.1.3" } }, "sha512-vQR53XR0dM0SpHMEJ8yNmkVnfE/IREvG/kKyWRZwdKOc8GNcMvBPlTImJ9tRSB1EsnPCs2zXZ4F24FtZOdcFXg=="],
 
-    "@upstash/ratelimit": ["@upstash/ratelimit@2.2.1", "", { "dependencies": { "@upstash/core-analytics": "^0.0.10" }, "peerDependencies": { "@upstash/redis": "^1.38.2" } }, "sha512-SE2BU4h4+Ua/5SLKkrXZ8j1hYZt8xge3dGD3mnMeDls1CiOpau8Q8gipdVtbbzjIxBxRutJqCBoeXqSa1HH3lg=="],
+    "@upstash/ratelimit": ["@upstash/ratelimit@2.2.3", "", { "dependencies": { "@upstash/core-analytics": "^0.0.10" }, "peerDependencies": { "@upstash/redis": "^1.41.1" } }, "sha512-cf4c8LBtJenbizSWYvWN+9vh7z+ywnZaaRH+J+p3w7i06ZUAXAeKzGQc19hgrSlQM8REtvS/CHMnsT+8lXV4VQ=="],
 
     "@upstash/redis": ["@upstash/redis@1.41.0", "", { "dependencies": { "uncrypto": "^0.1.3" } }, "sha512-TIu9C1B0ToXQLXt2M1LQuGZ6nkMjOZPIdJyU0GGWKZToa/MvJF8x2IRDOPMIAw2BLGXGhi1aZr5AnhlXu4YLXg=="],
 
